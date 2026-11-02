@@ -6,8 +6,6 @@ import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
-import android.view.WindowInsets;
-import android.view.WindowInsetsController;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
@@ -26,21 +24,13 @@ public class MainActivity extends Activity {
     }
 
     private void hideSystemUi() {
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            WindowInsetsController c = getWindow().getInsetsController();
-            if (c != null) {
-                c.hide(WindowInsets.Type.statusBars() | WindowInsets.Type.navigationBars());
-                c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
-            }
-        } else {
-            getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_FULLSCREEN |
-                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
-                    View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                    View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
-        }
+        getWindow().getDecorView().setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY |
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
     @Override
@@ -60,6 +50,7 @@ public class MainActivity extends Activity {
         FlightView(Context context) {
             super(context);
             paint.setStrokeCap(Paint.Cap.ROUND);
+            setBackgroundColor(Color.BLACK);
         }
 
         @Override
@@ -152,18 +143,15 @@ public class MainActivity extends Activity {
             float prevHalf = w * 0.055f;
 
             for (int i = 1; i <= slices; i++) {
-                float d = (i + phase) / (float)slices;
-                if (d > 1f) d -= 1f;
-                float depth = (i / (float)slices);
+                float depth = i / (float)slices;
                 float curve = (float)Math.sin(t * 0.54f + depth * 2.8f) * w * (0.015f + depth * 0.075f)
                         + (float)Math.sin(t * 0.19f + depth * 5.2f) * w * 0.018f;
                 float y = horizon + (float)Math.pow(depth, 1.72) * (h - horizon + h * 0.08f);
                 float half = w * (0.055f + (float)Math.pow(depth, 1.24) * 0.36f);
                 float center = w * 0.5f + curve;
 
-                int stripe = (int)Math.floor((depth * 18f + t * 3.0f));
-                int groundColor = (stripe & 1) == 0 ? Color.rgb(66, 92, 61) : Color.rgb(58, 82, 55);
-                paint.setColor(groundColor);
+                int stripe = (int)Math.floor(depth * 18f + t * 3.0f);
+                paint.setColor((stripe & 1) == 0 ? Color.rgb(66, 92, 61) : Color.rgb(58, 82, 55));
                 path.reset();
                 path.moveTo(prevCenter - prevHalf, prevY);
                 path.lineTo(prevCenter + prevHalf, prevY);
