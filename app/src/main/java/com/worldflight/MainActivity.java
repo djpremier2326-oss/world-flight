@@ -1,26 +1,122 @@
 package com.worldflight;
 
 import android.app.Activity;
+import android.graphics.Color;
 import android.os.Bundle;
-import android.os.SystemClock;
-import android.view.MotionEvent;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.LinearGradient;
-import android.graphics.Paint;
-import android.graphics.Path;
-import android.graphics.Shader;
-import android.content.Context;
+import android.widget.FrameLayout;
+import android.widget.TextView;
+
+import com.google.android.gms.maps3d.GoogleMap3D;
+import com.google.android.gms.maps3d.Map3DView;
+import com.google.android.gms.maps3d.OnMap3DViewReadyCallback;
+import com.google.android.gms.maps3d.model.Camera;
+import com.google.android.gms.maps3d.model.FlyToOptions;
+import com.google.android.gms.maps3d.model.LatLngAltitude;
+import com.google.android.gms.maps3d.model.Map3DMode;
 
 public class MainActivity extends Activity {
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private Map3DView map3DView;
+    private GoogleMap3D map;
+    private TextView status;
+    private boolean flightStarted = false;
+
+    private static final Waypoint[] NYC_ROUTE = new Waypoint[] {
+            // Midtown / Times Square -> Central Park South. Low cinematic corridor flight.
+            new Waypoint(40.75495, -73.98755, 18.0, 29.0, 83.0, -3.0, 52.0, 0),
+            new Waypoint(40.75635, -73.98685, 20.0, 29.0, 84.0,  4.0, 48.0, 3200),
+            new Waypoint(40.75805, -73.98595, 22.0, 28.0, 85.0, -5.0, 46.0, 3300),
+            new Waypoint(40.75965, -73.98505, 24.0, 29.0, 84.0,  5.0, 48.0, 3300),
+            new Waypoint(40.76130, -73.98410, 24.0, 30.0, 83.0, -4.0, 50.0, 3400),
+            new Waypoint(40.76285, -73.98320, 26.0, 31.0, 82.0,  4.0, 54.0, 3400),
+            new Waypoint(40.76430, -73.98230, 28.0, 32.0, 81.0, -2.0, 58.0, 3600),
+            new Waypoint(40.76555, -73.98165, 34.0, 33.0, 79.0,  0.0, 66.0, 3800)
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         hideSystemUi();
-        setContentView(new FlightView(this));
+
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(Color.BLACK);
+
+        map3DView = new Map3DView(this, Map3DMode.HYBRID);
+        root.addView(map3DView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT));
+
+        status = new TextView(this);
+        status.setText("NEW YORK · LOADING 3D");
+        status.setTextColor(Color.WHITE);
+        status.setTextSize(12f);
+        status.setGravity(Gravity.CENTER);
+        status.setBackgroundColor(0x66000000);
+        status.setPadding(22, 12, 22, 12);
+        FrameLayout.LayoutParams statusParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT);
+        statusParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        statusParams.topMargin = 36;
+        root.addView(status, statusParams);
+
+        setContentView(root);
+        map3DView.onCreate(savedInstanceState);
+
+        map3DView.getMap3DViewAsync(new OnMap3DViewReadyCallback() {
+            @Override
+            public void onMap3DViewReady(GoogleMap3D googleMap3D) {
+                map = googleMap3D;
+                status.setText("NEW YORK · PREPARING FLIGHT");
+                Camera start = cameraFor(NYC_ROUTE[0]);
+                map.setCamera(start);
+
+                map.setOnMapSteadyListener(isSteady -> {
+                    if (isSteady && !flightStarted) {
+                        flightStarted = true;
+                        map.setOnMapSteadyListener(null);
+                        status.setText("NEW YORK · WORLD FLIGHT");
+                        handler.postDelayed(() -> status.animate().alpha(0f).setDuration(900).start(), 1800);
+                        handler.postDelayed(() -> flyLeg(1), 700);
+                    }
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                status.setAlpha(1f);
+                status.setText("MAP ERROR · " + error.getMessage());
+            }
+        });
+    }
+
+    private Camera cameraFor(Waypoint p) {
+        LatLngAltitude center = new LatLngAltitude(p.lat, p.lng, p.altitude);
+        return new Camera(center, p.heading, p.tilt, p.roll, p.range);
+    }
+
+    private void flyLeg(int index) {
+        if (map == null || index >= NYC_ROUTE.length) {
+            handler.postDelayed(this::restartFlight, 1800);
+            return;
+        }
+
+        Waypoint p = NYC_ROUTE[index];
+        map.flyCameraTo(new FlyToOptions(cameraFor(p), p.durationMs));
+        handler.postDelayed(() -> flyLeg(index + 1), p.durationMs);
+    }
+
+    private void restartFlight() {
+        if (map == null) return;
+        map.stopCameraAnimation();
+        map.setCamera(cameraFor(NYC_ROUTE[0]));
+        handler.postDelayed(() -> flyLeg(1), 1200);
     }
 
     private void hideSystemUi() {
@@ -39,215 +135,70 @@ public class MainActivity extends Activity {
         if (hasFocus) hideSystemUi();
     }
 
-    static class FlightView extends View {
-        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        private final Path path = new Path();
-        private long startMs = SystemClock.elapsedRealtime();
-        private long pauseStartedMs = 0L;
-        private long pausedTotalMs = 0L;
-        private boolean paused = false;
+    @Override
+    protected void onStart() {
+        super.onStart();
+        if (map3DView != null) map3DView.onStart();
+    }
 
-        FlightView(Context context) {
-            super(context);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            setBackgroundColor(Color.BLACK);
-        }
+    @Override
+    protected void onResume() {
+        super.onResume();
+        hideSystemUi();
+        if (map3DView != null) map3DView.onResume();
+    }
 
-        @Override
-        public boolean onTouchEvent(MotionEvent event) {
-            if (event.getAction() == MotionEvent.ACTION_UP) {
-                long now = SystemClock.elapsedRealtime();
-                if (!paused) {
-                    paused = true;
-                    pauseStartedMs = now;
-                } else {
-                    paused = false;
-                    pausedTotalMs += now - pauseStartedMs;
-                }
-                invalidate();
-                return true;
-            }
-            return true;
-        }
+    @Override
+    protected void onPause() {
+        if (map3DView != null) map3DView.onPause();
+        super.onPause();
+    }
 
-        private float timeSeconds() {
-            long now = paused ? pauseStartedMs : SystemClock.elapsedRealtime();
-            return (now - startMs - pausedTotalMs) / 1000f;
-        }
+    @Override
+    protected void onStop() {
+        if (map3DView != null) map3DView.onStop();
+        super.onStop();
+    }
 
-        @Override
-        protected void onDraw(Canvas canvas) {
-            super.onDraw(canvas);
-            float w = getWidth();
-            float h = getHeight();
-            if (w <= 0 || h <= 0) return;
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacksAndMessages(null);
+        if (map3DView != null) map3DView.onDestroy();
+        super.onDestroy();
+    }
 
-            float t = timeSeconds();
-            float horizon = h * 0.34f;
+    @Override
+    public void onLowMemory() {
+        super.onLowMemory();
+        if (map3DView != null) map3DView.onLowMemory();
+    }
 
-            paint.setShader(new LinearGradient(0, 0, 0, horizon * 1.2f,
-                    Color.rgb(136, 190, 193), Color.rgb(215, 224, 190), Shader.TileMode.CLAMP));
-            canvas.drawRect(0, 0, w, horizon * 1.25f, paint);
-            paint.setShader(null);
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        if (map3DView != null) map3DView.onSaveInstanceState(outState);
+    }
 
-            canvas.save();
-            float bank = (float)Math.sin(t * 0.78f) * 4.2f + (float)Math.sin(t * 0.21f) * 2.0f;
-            float bob = (float)Math.sin(t * 1.7f) * 8f;
-            canvas.rotate(bank, w * 0.5f, h * 0.56f);
-            canvas.translate(0, bob);
+    private static final class Waypoint {
+        final double lat;
+        final double lng;
+        final double altitude;
+        final double heading;
+        final double tilt;
+        final double roll;
+        final double range;
+        final long durationMs;
 
-            drawFarMountains(canvas, w, h, horizon, t);
-            drawCanyon(canvas, w, h, horizon, t);
-            drawSpeedDetails(canvas, w, h, horizon, t);
-            canvas.restore();
-
-            drawOverlay(canvas, w, h, t);
-
-            if (!paused) postInvalidateOnAnimation();
-        }
-
-        private void drawFarMountains(Canvas c, float w, float h, float horizon, float t) {
-            float shift = (float)Math.sin(t * 0.12f) * w * 0.04f;
-            paint.setColor(Color.rgb(79, 108, 79));
-            path.reset();
-            path.moveTo(-w * 0.15f + shift, horizon + h * 0.03f);
-            path.lineTo(w * 0.06f + shift, horizon - h * 0.10f);
-            path.lineTo(w * 0.18f + shift, horizon - h * 0.02f);
-            path.lineTo(w * 0.33f + shift, horizon - h * 0.16f);
-            path.lineTo(w * 0.49f + shift, horizon - h * 0.03f);
-            path.lineTo(w * 0.64f + shift, horizon - h * 0.13f);
-            path.lineTo(w * 0.83f + shift, horizon - h * 0.01f);
-            path.lineTo(w * 1.12f + shift, horizon - h * 0.11f);
-            path.lineTo(w * 1.18f, horizon + h * 0.08f);
-            path.close();
-            c.drawPath(path, paint);
-
-            paint.setColor(Color.rgb(57, 86, 59));
-            path.reset();
-            path.moveTo(-w * 0.1f - shift, horizon + h * 0.05f);
-            path.lineTo(w * 0.10f - shift, horizon - h * 0.03f);
-            path.lineTo(w * 0.25f - shift, horizon + h * 0.01f);
-            path.lineTo(w * 0.42f - shift, horizon - h * 0.08f);
-            path.lineTo(w * 0.57f - shift, horizon + h * 0.02f);
-            path.lineTo(w * 0.78f - shift, horizon - h * 0.07f);
-            path.lineTo(w * 1.1f - shift, horizon + h * 0.05f);
-            path.close();
-            c.drawPath(path, paint);
-        }
-
-        private void drawCanyon(Canvas c, float w, float h, float horizon, float t) {
-            int slices = 34;
-            float phase = (t * 0.62f) % 1f;
-            float prevY = horizon;
-            float prevCenter = w * 0.5f;
-            float prevHalf = w * 0.055f;
-
-            for (int i = 1; i <= slices; i++) {
-                float depth = i / (float)slices;
-                float curve = (float)Math.sin(t * 0.54f + depth * 2.8f) * w * (0.015f + depth * 0.075f)
-                        + (float)Math.sin(t * 0.19f + depth * 5.2f) * w * 0.018f;
-                float y = horizon + (float)Math.pow(depth, 1.72) * (h - horizon + h * 0.08f);
-                float half = w * (0.055f + (float)Math.pow(depth, 1.24) * 0.36f);
-                float center = w * 0.5f + curve;
-
-                int stripe = (int)Math.floor(depth * 18f + t * 3.0f);
-                paint.setColor((stripe & 1) == 0 ? Color.rgb(66, 92, 61) : Color.rgb(58, 82, 55));
-                path.reset();
-                path.moveTo(prevCenter - prevHalf, prevY);
-                path.lineTo(prevCenter + prevHalf, prevY);
-                path.lineTo(center + half, y);
-                path.lineTo(center - half, y);
-                path.close();
-                c.drawPath(path, paint);
-
-                int leftShade = 54 + (int)(42 * depth);
-                paint.setColor(Color.rgb(34, leftShade, 40));
-                path.reset();
-                path.moveTo(0, prevY - h * 0.12f * depth);
-                path.lineTo(prevCenter - prevHalf, prevY);
-                path.lineTo(center - half, y);
-                path.lineTo(0, y + h * 0.08f);
-                path.close();
-                c.drawPath(path, paint);
-
-                int rightShade = 62 + (int)(45 * depth);
-                paint.setColor(Color.rgb(38, rightShade, 44));
-                path.reset();
-                path.moveTo(w, prevY - h * 0.10f * depth);
-                path.lineTo(prevCenter + prevHalf, prevY);
-                path.lineTo(center + half, y);
-                path.lineTo(w, y + h * 0.07f);
-                path.close();
-                c.drawPath(path, paint);
-
-                if (i % 5 == 0 && depth > 0.18f) {
-                    float riverHalf = half * 0.24f;
-                    paint.setColor(Color.rgb(67, 112, 111));
-                    c.drawRect(center - riverHalf, y - Math.max(2f, depth * 10f), center + riverHalf, y + Math.max(2f, depth * 10f), paint);
-                }
-
-                prevY = y;
-                prevCenter = center;
-                prevHalf = half;
-            }
-
-            paint.setColor(Color.argb(55, 230, 235, 216));
-            c.drawRect(0, horizon - h * 0.025f, w, horizon + h * 0.065f, paint);
-        }
-
-        private void drawSpeedDetails(Canvas c, float w, float h, float horizon, float t) {
-            int count = 24;
-            for (int i = 0; i < count; i++) {
-                float p = ((i / (float)count) + (t * 0.18f)) % 1f;
-                float depth = p;
-                float y = horizon + (float)Math.pow(depth, 1.65) * (h - horizon);
-                float center = w * 0.5f + (float)Math.sin(t * 0.54f + depth * 2.8f) * w * (0.02f + depth * 0.08f);
-                float spread = w * (0.08f + depth * 0.48f);
-                float side = (i % 2 == 0) ? -1f : 1f;
-                float x = center + side * spread;
-                float size = 3f + depth * depth * 34f;
-
-                paint.setColor(Color.rgb(24, 63 + (int)(45 * depth), 30));
-                c.drawCircle(x, y, size * 0.62f, paint);
-                c.drawCircle(x + side * size * 0.3f, y - size * 0.35f, size * 0.45f, paint);
-
-                if (depth > 0.72f) {
-                    paint.setColor(Color.argb((int)(90 * depth), 225, 235, 210));
-                    paint.setStrokeWidth(1.5f + depth * 2f);
-                    c.drawLine(x, y - size, x - side * size * 0.7f, y - size * 2.4f, paint);
-                }
-            }
-        }
-
-        private void drawOverlay(Canvas c, float w, float h, float t) {
-            paint.setTextAlign(Paint.Align.CENTER);
-            if (t < 3.2f) {
-                float alpha = t < 2.2f ? 1f : Math.max(0f, 1f - (t - 2.2f));
-                paint.setColor(Color.argb((int)(230 * alpha), 255, 255, 255));
-                paint.setTextSize(w * 0.075f);
-                paint.setFakeBoldText(true);
-                c.drawText("WORLD FLIGHT", w * 0.5f, h * 0.16f, paint);
-                paint.setTextSize(w * 0.035f);
-                paint.setFakeBoldText(false);
-                paint.setColor(Color.argb((int)(200 * alpha), 255, 255, 255));
-                c.drawText("JUNGLE RUN · PROTOTYPE 01", w * 0.5f, h * 0.205f, paint);
-                paint.setTextSize(w * 0.031f);
-                paint.setColor(Color.argb((int)(170 * alpha), 255, 255, 255));
-                c.drawText("tap anywhere to pause", w * 0.5f, h * 0.89f, paint);
-            }
-
-            if (paused) {
-                paint.setColor(Color.argb(120, 0, 0, 0));
-                c.drawRect(0, 0, w, h, paint);
-                paint.setColor(Color.WHITE);
-                paint.setTextSize(w * 0.075f);
-                paint.setFakeBoldText(true);
-                c.drawText("PAUSED", w * 0.5f, h * 0.49f, paint);
-                paint.setTextSize(w * 0.032f);
-                paint.setFakeBoldText(false);
-                c.drawText("tap to continue", w * 0.5f, h * 0.54f, paint);
-            }
-            paint.setFakeBoldText(false);
+        Waypoint(double lat, double lng, double altitude, double heading,
+                 double tilt, double roll, double range, long durationMs) {
+            this.lat = lat;
+            this.lng = lng;
+            this.altitude = altitude;
+            this.heading = heading;
+            this.tilt = tilt;
+            this.roll = roll;
+            this.range = range;
+            this.durationMs = durationMs;
         }
     }
 }
